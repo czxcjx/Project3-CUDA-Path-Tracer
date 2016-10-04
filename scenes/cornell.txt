@@ -125,3 +125,12 @@ material 5
 TRANS       2 2 2
 ROTAT       0 0 0
 SCALE       3 3 3
+
+// Mesh
+OBJECT 7
+mesh
+mesh 0
+material 2
+TRANS       -2 2 2
+ROTAT       0 0 0
+SCALE       3 3 3

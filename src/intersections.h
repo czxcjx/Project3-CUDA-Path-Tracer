@@ -142,3 +142,67 @@ __host__ __device__ float sphereIntersectionTest(Geom sphere, Ray r,
 
     return glm::length(r.origin - intersectionPoint);
 }
+
+/**
+* Test intersection between a ray and a triangle.
+*
+* @param intersectionPoint  Output parameter for point of intersection.
+* @param normal             Output parameter for surface normal.
+* @param outside            Output param for whether the ray came from outside.
+* @return                   Ray parameter `t` value. -1 if no intersection.
+*/
+__host__ __device__ float triangleIntersectionTest(Triangle triangle, Ray r,
+	glm::vec3 &intersectionPoint, glm::vec3 &normal, bool &outside) {
+	glm::vec3 result;
+	if (glm::intersectRayTriangle(r.origin, r.direction, triangle.vertices[0], triangle.vertices[1], triangle.vertices[2], result)) {
+		intersectionPoint = result.x * triangle.vertices[0] + result.y * triangle.vertices[1] + result.z * triangle.vertices[2];
+		normal = triangle.normal;
+		outside = glm::dot(r.direction, normal) < 0.0f;
+		if (!outside) {
+			normal = -normal;
+		}
+		return glm::length(intersectionPoint - r.origin);
+	}
+	else {
+		return -1.0f;
+	}
+}
+
+/**
+* Test intersection between a ray and a mesh
+*
+* @param intersectionPoint  Output parameter for point of intersection.
+* @param normal             Output parameter for surface normal.
+* @param outside            Output param for whether the ray came from outside.
+* @return                   Ray parameter `t` value. -1 if no intersection.
+*/
+__host__ __device__ float meshIntersectionTest(Geom geom, Mesh * meshes, Ray r,
+	glm::vec3 &intersectionPoint, glm::vec3 &normal, bool &outside) {
+
+	glm::vec3 ro = multiplyMV(geom.inverseTransform, glm::vec4(r.origin, 1.0f));
+	glm::vec3 rd = glm::normalize(multiplyMV(geom.inverseTransform, glm::vec4(r.direction, 0.0f)));
+	Ray rt;
+	rt.origin = ro;
+	rt.direction = rd;
+	
+	Mesh & mesh = meshes[geom.meshid];
+
+	float t_min = FLT_MAX;
+	for (int i = 0; i < mesh.numTriangles; i++) {
+		glm::vec3 intersect, norm;
+		bool out;
+		float t = triangleIntersectionTest(mesh.triangles[i], rt, intersect, norm, out);
+		if (t > 1e-3 && t_min > t) {
+			t_min = t;
+			intersectionPoint = multiplyMV(geom.transform, glm::vec4(intersect, 1.0f));
+			normal = glm::normalize(multiplyMV(geom.transform, glm::vec4(norm, 0.0f)));
+			outside = out;
+		}
+	}
+	if (t_min == FLT_MAX) {
+		return -1.0f;
+	}
+	else {
+		return glm::length(r.origin - intersectionPoint);
+	}
+}
