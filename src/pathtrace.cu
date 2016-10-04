@@ -149,9 +149,7 @@ __global__ void pathTraceOneBounce(
   , int num_paths
   , PathSegment * pathSegments
   , Geom * geoms
-  , int geoms_size
-  // , ShadeableIntersection * intersections
-  )
+  , int geoms_size)
 {
   int path_index = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -188,7 +186,6 @@ __global__ void pathTraceOneBounce(
         t = sphereIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
       }
       // TODO: add more intersection tests here... triangle? metaball? CSG?
-
       // Compute the minimum t from the intersection tests to determine what
       // scene geometry object was hit first.
       if (t > 1e-3 && t_min > t)
@@ -223,6 +220,7 @@ __global__ void simpleBSDFShader(int iter, int num_paths, PathSegment * pathSegm
   if (pathSegments[idx].remainingBounces >= 0) {
     // If intersection exists
     if (intersection.t > 0.0f) {
+
       Material material = materials[intersection.materialId];
       // Hit a light
       if (material.emittance > 0.0f) {
@@ -232,8 +230,7 @@ __global__ void simpleBSDFShader(int iter, int num_paths, PathSegment * pathSegm
       // Bouncing off a nonlight
       else {
         scatterRay(
-          pathSegments[idx].ray,
-          pathSegments[idx].color,
+          pathSegments[idx],
           pathSegments[idx].ray.origin + intersection.t * pathSegments[idx].ray.direction,
           intersection.surfaceNormal,
           material,

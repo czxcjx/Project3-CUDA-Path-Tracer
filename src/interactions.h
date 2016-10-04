@@ -68,20 +68,20 @@ glm::vec3 calculateRandomDirectionInHemisphere(
  */
 __host__ __device__
 void scatterRay(
-        Ray &ray,
-        glm::vec3 &color,
+		PathSegment & pathSegment,
         glm::vec3 intersect,
         glm::vec3 normal,
         const Material &m,
         thrust::default_random_engine &rng) {
+	Ray & ray = pathSegment.ray;
   ray.origin = intersect;
   // thrust::uniform_real_distribution<float> u01(0, 1);
   if (m.hasReflective > 0.0f) {
     ray.direction = glm::reflect(ray.direction, normal);
-    color *= m.specular.color;
+    pathSegment.color *= m.specular.color;
   }
   else {
     ray.direction = calculateRandomDirectionInHemisphere(normal, rng);
-    color *= m.color * glm::dot(ray.direction, normal);
+		pathSegment.color *= m.color * glm::dot(ray.direction, normal);
   }
 }
