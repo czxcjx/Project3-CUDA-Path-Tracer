@@ -97,10 +97,14 @@ void scatterRay(
 	Ray & ray = pathSegment.ray;
   ray.origin = intersect;
 	thrust::uniform_real_distribution<float> u01(0, 1);
+	float specularWeight = 0.5f;
+	float specularWeightInverse = 1.0f / specularWeight;
+	float diffuseWeightInverse = 1.0f / (1 - specularWeight);
+
 	// Specular highlight
-  if (u01(rng) > 0.5f) {
+  if (u01(rng) > specularWeight) {
 		ray.direction = calculateRandomDirectionWithSpecular(m.specular.exponent, ray.direction, normal, rng);
-		pathSegment.color *= m.specular.color;
+		pathSegment.color *= m.specular.color * specularWeightInverse;
   }
 	// Diffuse color
   else {
@@ -109,13 +113,15 @@ void scatterRay(
 		}
 		else if (m.hasRefractive > 0.0f) {
 			float refractionCoeff = (pathSegment.insideRefractiveObject) ? m.indexOfRefraction : 1.0f / m.indexOfRefraction;
-			ray.direction = glm::refract(ray.direction, normal, refractionCoeff);
-			pathSegment.insideRefractiveObject = !pathSegment.insideRefractiveObject;
+			ray.direction = glm::normalize(glm::refract(ray.direction, normal, refractionCoeff));
+			if (glm::dot(ray.direction, normal) < 0.0f) {
+				pathSegment.insideRefractiveObject = !pathSegment.insideRefractiveObject;
+			}
 		}
 		else {
 			ray.direction = calculateRandomDirectionInHemisphere(normal, rng);
 			pathSegment.color *= glm::dot(ray.direction, normal);
 		}
-		pathSegment.color *= m.color;
+		pathSegment.color *= m.color * diffuseWeightInverse;
   }
 }
