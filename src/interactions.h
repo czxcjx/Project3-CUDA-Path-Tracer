@@ -2,6 +2,8 @@
 
 #include "intersections.h"
 
+#include <glm/gtx/rotate_vector.hpp>
+
 // CHECKITOUT
 /**
  * Computes a cosine-weighted random direction in a hemisphere.
@@ -41,6 +43,25 @@ glm::vec3 calculateRandomDirectionInHemisphere(
         + sin(around) * over * perpendicularDirection2;
 }
 
+__host__ __device__
+glm::vec3 calculateRandomDirectionWithSpecular(float specularExponent, glm::vec3 direction,
+glm::vec3 normal, thrust::default_random_engine &rng) {
+	thrust::uniform_real_distribution<float> u01(0, 1);
+
+	float theta = acos(pow(u01(rng), 1.0f / (1.0f + specularExponent)));
+	float phi = 2 * PI * u01(rng);
+
+	glm::vec3 randDir(cos(phi) * sin(theta), sin(phi) * sin(theta), cos(theta));
+
+	glm::vec3 newUp = glm::normalize(glm::reflect(direction, normal));
+	glm::vec3 oldUp(0, 0, 1);
+
+	glm::vec3 rotationAxis = glm::cross(oldUp, newUp);
+	float rotationAngle = acos(glm::dot(newUp, oldUp));
+
+	return glm::rotate(randDir, rotationAngle, rotationAxis);
+}
+
 /**
  * Scatter a ray with some probabilities according to the material properties.
  * For example, a diffuse surface scatters in a cosine-weighted hemisphere.
@@ -75,13 +96,26 @@ void scatterRay(
         thrust::default_random_engine &rng) {
 	Ray & ray = pathSegment.ray;
   ray.origin = intersect;
-  // thrust::uniform_real_distribution<float> u01(0, 1);
-  if (m.hasReflective > 0.0f) {
-    ray.direction = glm::reflect(ray.direction, normal);
-    pathSegment.color *= m.specular.color;
+	thrust::uniform_real_distribution<float> u01(0, 1);
+	// Specular highlight
+  if (u01(rng) > 0.5f) {
+		ray.direction = calculateRandomDirectionWithSpecular(m.specular.exponent, ray.direction, normal, rng);
+		pathSegment.color *= m.specular.color;
   }
+	// Diffuse color
   else {
-    ray.direction = calculateRandomDirectionInHemisphere(normal, rng);
-		pathSegment.color *= m.color * glm::dot(ray.direction, normal);
+		if (m.hasReflective > 0.0f) {
+			ray.direction = glm::reflect(ray.direction, normal);
+		}
+		else if (m.hasRefractive > 0.0f) {
+			float refractionCoeff = (pathSegment.insideRefractiveObject) ? m.indexOfRefraction : 1.0f / m.indexOfRefraction;
+			ray.direction = glm::refract(ray.direction, normal, refractionCoeff);
+			pathSegment.insideRefractiveObject = !pathSegment.insideRefractiveObject;
+		}
+		else {
+			ray.direction = calculateRandomDirectionInHemisphere(normal, rng);
+			pathSegment.color *= glm::dot(ray.direction, normal);
+		}
+		pathSegment.color *= m.color;
   }
 }
