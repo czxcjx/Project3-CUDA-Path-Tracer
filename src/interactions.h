@@ -75,9 +75,10 @@ void scatterRay(
         const Material &m,
         thrust::default_random_engine &rng) {
   ray.origin = intersect;
+  // thrust::uniform_real_distribution<float> u01(0, 1);
   if (m.hasReflective > 0.0f) {
     ray.direction = glm::reflect(ray.direction, normal);
-    color *= m.color;
+    color *= m.specular.color;
   }
   else {
     ray.direction = calculateRandomDirectionInHemisphere(normal, rng);

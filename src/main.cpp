@@ -1,6 +1,7 @@
 #include "main.h"
 #include "preview.h"
 #include <cstring>
+#include <chrono>
 
 static std::string startTimeString;
 
@@ -122,7 +123,10 @@ void runCuda() {
     // Map OpenGL buffer object for writing from CUDA on a single GPU
     // No data is moved (Win & Linux). When mapped to CUDA, OpenGL should not use this buffer
 
+		static std::chrono::time_point<std::chrono::high_resolution_clock> start;
+
     if (iteration == 0) {
+				start = std::chrono::high_resolution_clock::now();
         pathtraceFree();
         pathtraceInit(scene);
     }
@@ -139,10 +143,13 @@ void runCuda() {
         // unmap buffer object
         cudaGLUnmapBufferObject(pbo);
     } else {
-        saveImage();
-        pathtraceFree();
-        cudaDeviceReset();
-        exit(EXIT_SUCCESS);
+			std::chrono::time_point<std::chrono::high_resolution_clock> end = std::chrono::high_resolution_clock::now();
+			double seconds = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() * 1e-6;
+      printf("Took %lf seconds for %d iterations\n", seconds, renderState->iterations);
+      saveImage();
+      pathtraceFree();
+      cudaDeviceReset();
+      exit(EXIT_SUCCESS);
     }
 }
 

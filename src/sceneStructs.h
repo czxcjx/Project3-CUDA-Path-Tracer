@@ -59,18 +59,20 @@ struct RenderState {
     std::string imageName;
 };
 
+// Use with a corresponding PathSegment to do:
+// 1) color contribution computation
+// 2) BSDF evaluation: generate a new ray
+struct ShadeableIntersection {
+	float t;
+	glm::vec3 surfaceNormal;
+	int materialId;
+};
+
 struct PathSegment {
 	Ray ray;
 	glm::vec3 color;
 	int pixelIndex;
 	int remainingBounces;
+	ShadeableIntersection intersection;
 };
 
-// Use with a corresponding PathSegment to do:
-// 1) color contribution computation
-// 2) BSDF evaluation: generate a new ray
-struct ShadeableIntersection {
-  float t;
-  glm::vec3 surfaceNormal;
-  int materialId;
-};
