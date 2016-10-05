@@ -22,6 +22,7 @@ public:
   ~Scene();
 
   std::vector<Geom> geoms;
+  std::vector<Geom> meshGeoms;
   std::vector<Material> materials;
   std::vector<Mesh> meshes;
   std::vector<Triangle> triangles;

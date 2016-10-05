@@ -97,12 +97,11 @@ void scatterRay(
 	Ray & ray = pathSegment.ray;
   ray.origin = intersect;
 	thrust::uniform_real_distribution<float> u01(0, 1);
-	float specularWeight = 0.5f;
-	float specularWeightInverse = 1.0f / specularWeight;
-	float diffuseWeightInverse = 1.0f / (1 - specularWeight);
-
+  const float specularWeight = 0.0f;
+  const float specularWeightInverse = (specularWeight > 0.0f) ? 1.0f / specularWeight : 0.0f;
+  const float diffuseWeightInverse = 1.0f / (1 - specularWeight);
 	// Specular highlight
-  if (u01(rng) > specularWeight) {
+  if (u01(rng) < specularWeight) {
 		ray.direction = calculateRandomDirectionWithSpecular(m.specular.exponent, ray.direction, normal, rng);
 		pathSegment.color *= m.specular.color * specularWeightInverse;
   }

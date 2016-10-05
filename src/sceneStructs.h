@@ -41,7 +41,7 @@ struct Triangle {
     vertices[0] = v1;
     vertices[1] = v2;
     vertices[2] = v3;
-    normal = glm::normalize(glm::cross(v2 - v1, v3 - v1));
+    normal = glm::normalize(glm::cross(v3 - v1, v2 - v1));
   }
 };
 

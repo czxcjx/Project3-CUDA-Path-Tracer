@@ -178,7 +178,7 @@ __host__ __device__ float meshIntersectionTest(Geom geom, Mesh * meshes, Triangl
   }
 
 	float t_min = FLT_MAX;
-	/*for (int i = mesh.triangleStart; i < mesh.triangleEnd; i++) {
+	for (int i = mesh.triangleStart; i < mesh.triangleEnd; i++) {
     glm::vec3 result;
     bool hasIntersect = glm::intersectRayTriangle(rt.origin, rt.direction, triangles[i].vertices[0], triangles[i].vertices[1], triangles[i].vertices[2], result);
     glm::vec3 tmp_intersect = getPointOnRay(rt, result.z);
@@ -189,9 +189,9 @@ __host__ __device__ float meshIntersectionTest(Geom geom, Mesh * meshes, Triangl
 			normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(triangles[i].normal, 0.0f)));
 			outside = glm::dot(rt.direction, normal) < 0.0f;
 		}
-	}*/
+	}
 
-  glm::vec3 gridDim = (mesh.boxMax - mesh.boxMin) / (float)GRID_SIZE;
+  /*glm::vec3 gridDim = (mesh.boxMax - mesh.boxMin) / (float)GRID_SIZE;
 
   for (int x = 0; x < GRID_SIZE; x++) {
     for (int y = 0; y < GRID_SIZE; y++) {
@@ -213,7 +213,7 @@ __host__ __device__ float meshIntersectionTest(Geom geom, Mesh * meshes, Triangl
         }
       }
     }
-  }
+  }*/
 	if (t_min == FLT_MAX) {
 		return -1.0f;
 	}

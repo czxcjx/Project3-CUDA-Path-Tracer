@@ -18,6 +18,7 @@
 #define ERRORCHECK 1
 #define GROUPBYMAT 0
 #define CACHEFIRSTBOUNCE 1
+#define CALCMESHSEPARATELY 1
 
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
@@ -83,9 +84,10 @@ static Mesh * dev_meshes = NULL;
 static Triangle * dev_triangles = NULL;
 
 static glm::ivec2 * dev_path_mesh_intersections = NULL;
-static float * dev_path_mesh_intersection_dists = NULL;
+static ShadeableIntersection * dev_path_mesh_intersection_dists = NULL;
 static glm::ivec2 * dev_pm_intersection_out = NULL;
-static float * dev_pm_intersection_dists_out = NULL;
+static ShadeableIntersection * dev_pm_intersection_dists_out = NULL;
+int numGeoms = 0;
 
 void pathtraceInit(Scene *scene) {
   hst_scene = scene;
@@ -94,13 +96,25 @@ void pathtraceInit(Scene *scene) {
 
   cudaMalloc(&dev_image, pixelcount * sizeof(glm::vec3));
   cudaMemset(dev_image, 0, pixelcount * sizeof(glm::vec3));
-
   cudaMalloc(&dev_paths, pixelcount * sizeof(PathSegment));
 
+#if CALCMESHSEPARATELY == 1
   cudaMalloc(&dev_geoms, scene->geoms.size() * sizeof(Geom));
   cudaMemcpy(dev_geoms, scene->geoms.data(), scene->geoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
   cudaMalloc(&dev_meshgeoms, scene->meshGeoms.size() * sizeof(Geom));
   cudaMemcpy(dev_meshgeoms, scene->meshGeoms.data(), scene->meshGeoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
+  cudaMalloc(&dev_path_mesh_intersections, pixelcount * scene->meshGeoms.size() * sizeof(glm::ivec2));
+  cudaMalloc(&dev_path_mesh_intersection_dists, pixelcount * scene->meshGeoms.size() * sizeof(ShadeableIntersection));
+  cudaMalloc(&dev_pm_intersection_out, pixelcount * sizeof(glm::ivec2));
+  cudaMalloc(&dev_pm_intersection_dists_out, pixelcount * sizeof(ShadeableIntersection));
+  numGeoms = scene->geoms.size();
+#else
+  numGeoms = scene->geoms.size() + scene->meshGeoms.size();
+  cudaMalloc(&dev_geoms, numGeoms * sizeof(Geom));
+  cudaMemcpy(dev_geoms, scene->geoms.data(), scene->geoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
+  cudaMemcpy(dev_geoms + scene->geoms.size(), scene->meshGeoms.data(), scene->meshGeoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
+#endif
+
 
   cudaMalloc(&dev_materials, scene->materials.size() * sizeof(Material));
   cudaMemcpy(dev_materials, scene->materials.data(), scene->materials.size() * sizeof(Material), cudaMemcpyHostToDevice);
@@ -111,11 +125,6 @@ void pathtraceInit(Scene *scene) {
   cudaMemcpy(dev_meshes, scene->meshes.data(), scene->meshes.size() * sizeof(Mesh), cudaMemcpyHostToDevice);
   cudaMalloc(&dev_triangles, scene->triangles.size() * sizeof(Triangle));
   cudaMemcpy(dev_triangles, scene->triangles.data(), scene->triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
-
-  cudaMalloc(&dev_path_mesh_intersections, pixelcount * scene->meshGeoms.size() * sizeof(glm::ivec2));
-  cudaMalloc(&dev_path_mesh_intersection_dists, pixelcount * scene->meshGeoms.size() * sizeof(float));
-  cudaMalloc(&dev_pm_intersection_out, pixelcount * sizeof(glm::ivec2));
-  cudaMalloc(&dev_pm_intersection_dists_out, pixelcount * sizeof(float));
 
   checkCUDAError("pathtraceInit");
 }
@@ -129,6 +138,13 @@ void pathtraceFree() {
   cudaFree(dev_cached_paths);
   cudaFree(dev_meshes);
   cudaFree(dev_triangles);
+#if CALCMESHSEPARATELY == 1
+  cudaFree(dev_meshgeoms);
+  cudaFree(dev_path_mesh_intersections);
+  cudaFree(dev_path_mesh_intersection_dists);
+  cudaFree(dev_pm_intersection_out);
+  cudaFree(dev_pm_intersection_dists_out);
+#endif
 
   checkCUDAError("pathtraceFree");
 }
@@ -208,10 +224,12 @@ __global__ void pathTraceSphereBox(
       {
         t = sphereIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
       }
-      /*else if (geom.type == MESH)
+#if CALCMESHSEPARATELY == 0
+      else if (geom.type == MESH)
       {
         t = meshIntersectionTest(geom, meshes, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside);
-      }*/
+      }
+#endif
       // TODO: add more intersection tests here... triangle? metaball? CSG?
       // Compute the minimum t from the intersection tests to determine what
       // scene geometry object was hit first.
@@ -308,7 +326,7 @@ __global__ void kernCalculateMeshBoundingBoxIntersections(int nPaths, int nMeshe
 
     float tmin, tmax;
     glm::vec3 tmin_n, tmax_n;
-    if (orientedBoxIntersection(mesh.boxMin, mesh.boxMax, path.ray, tmin, tmax, tmin_n, tmax_n)) {
+    if (orientedBoxIntersection(mesh.boxMin, mesh.boxMax, rt, tmin, tmax, tmin_n, tmax_n)) {
       intersections[idx] = glm::ivec2(pathIndex, meshIndex);
     }
     else {
@@ -317,19 +335,37 @@ __global__ void kernCalculateMeshBoundingBoxIntersections(int nPaths, int nMeshe
   }
 }
 
-__global__ void kernPathTraceMesh(int nIntersections, PathSegment * iterationPaths, 
-  Geom * meshgeoms, Mesh * meshes, glm::ivec2 * intersections, Triangle * triangles, float * dist_out) {
+__global__ void kernPathTraceMesh(int nIntersections, PathSegment * iterationPaths,
+  Geom * meshgeoms, Mesh * meshes, glm::ivec2 * intersections, Triangle * triangles,
+  ShadeableIntersection * intersection_out) {
   int index = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (index < nIntersections) {
     int pathIndex = intersections[index].x;
     int meshIndex = intersections[index].y;
     PathSegment & path = iterationPaths[pathIndex];
     Geom & meshGeom = meshgeoms[meshIndex];
-    Mesh & mesh = meshes[meshGeom.meshid];
 
     glm::vec3 tmp_intersect, tmp_normal;
     bool outside;
-    dist_out[index] = meshIntersectionTest(meshGeom, meshes, triangles, path.ray, tmp_intersect, tmp_normal, outside);
+    intersection_out[index].t = meshIntersectionTest(meshGeom, meshes, triangles, path.ray, tmp_intersect, tmp_normal, outside);
+    intersection_out[index].surfaceNormal = tmp_normal;
+    intersection_out[index].materialId = meshGeom.materialid;
+  }
+}
+
+__global__ void kernTakeMeshIntersection(int nIntersections, PathSegment * iterationPaths,
+  glm::ivec2 * intersectionKeys, ShadeableIntersection * intersectionValues) {
+  int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+  if (index < nIntersections) {
+    ShadeableIntersection & meshIntersection = intersectionValues[index];
+    if (meshIntersection.t > EPSILON) {
+      int pathIndex = intersectionKeys[index].x;
+      ShadeableIntersection & intersection = iterationPaths[pathIndex].intersection;
+      ShadeableIntersection & meshIntersection = intersectionValues[index];
+      if (intersection.t < EPSILON || intersection.t > meshIntersection.t) {
+        intersection = meshIntersection;
+      }
+    }
   }
 }
 
@@ -348,6 +384,24 @@ struct SortByMaterial {
 struct IsNonintersection {
   __host__ __device__ bool operator() (const glm::ivec2 v) {
     return v.x == -1 && v.y == -1;
+  }
+};
+
+struct TakeMinIntersection {
+  __host__ __device__ ShadeableIntersection operator() (ShadeableIntersection i1, ShadeableIntersection i2) {
+    if (i1.t < EPSILON) {
+      return i2;
+    }
+    if (i2.t < EPSILON) {
+      return i1;
+    }
+    return (i1.t < i2.t) ? i1 : i2;
+  }
+};
+
+struct ComparePathKey {
+  __host__ __device__ bool operator() (const glm::ivec2 v1, const glm::ivec2 v2) {
+    return v1.x == v2.x;
   }
 };
 
@@ -437,27 +491,48 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
         , num_pathsInFlight
         , dev_paths
         , dev_geoms
-        , hst_scene->geoms.size()
+        , numGeoms
         , dev_meshes
         , dev_triangles
         );
-
+#if CALCMESHSEPARATELY == 1
       // meshes
       dim3 meshBoxTracing(
-        (num_pathsInFlight + blockSize2d.x - 1) / blockSize2d.x, 
+        (num_pathsInFlight + blockSize2d.x - 1) / blockSize2d.x,
         (hst_scene->meshGeoms.size() + blockSize2d.y - 1) / blockSize2d.y
         );
       kernCalculateMeshBoundingBoxIntersections << <meshBoxTracing, blockSize2d >> >(
         num_pathsInFlight, hst_scene->meshGeoms.size(), dev_paths, dev_meshgeoms, dev_meshes, dev_path_mesh_intersections);
       thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections = thrust::device_pointer_cast(dev_path_mesh_intersections);
       int numIntersections = num_pathsInFlight * hst_scene->meshGeoms.size();
-      thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections_end = 
+      thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections_end =
         thrust::remove_if(dev_thrust_path_mesh_intersections, dev_thrust_path_mesh_intersections + numIntersections, IsNonintersection());
-      numIntersections = dev_thrust_path_mesh_intersections_end - dev_thrust_path_mesh_intersections;
-      dim3 meshTracing((numIntersections + blockSize1d - 1) / blockSize1d);
-      kernPathTraceMesh << <meshTracing, blockSize1d>> > (
-        );
+      int numActualIntersections = dev_thrust_path_mesh_intersections_end - dev_thrust_path_mesh_intersections;
+      // printf("Culled from %d to %d intersections\n", numIntersections, numActualIntersections);
+      dim3 meshTracing((numActualIntersections + blockSize1d - 1) / blockSize1d);
+      kernPathTraceMesh << <meshTracing, blockSize1d >> > (
+        numActualIntersections, dev_paths, dev_meshgeoms, dev_meshes, dev_path_mesh_intersections, dev_triangles,
+        dev_path_mesh_intersection_dists);
 
+      thrust::device_ptr<ShadeableIntersection> dev_thrust_path_mesh_intersection_dists =
+        thrust::device_pointer_cast(dev_path_mesh_intersection_dists);
+      thrust::device_ptr<glm::ivec2> dev_thrust_pm_intersection_out =
+        thrust::device_pointer_cast(dev_pm_intersection_out);
+      thrust::device_ptr<ShadeableIntersection> dev_thrust_pm_intersection_dists_out =
+        thrust::device_pointer_cast(dev_pm_intersection_dists_out);
+
+      thrust::pair<thrust::device_ptr<glm::ivec2>, thrust::device_ptr<ShadeableIntersection>> reductionResult =
+        thrust::reduce_by_key(dev_thrust_path_mesh_intersections,
+        dev_thrust_path_mesh_intersections + numActualIntersections,
+        dev_thrust_path_mesh_intersection_dists,
+        dev_thrust_pm_intersection_out,
+        dev_thrust_pm_intersection_dists_out,
+        ComparePathKey(),
+        TakeMinIntersection());
+      int numPathIntersections = reductionResult.first - dev_thrust_pm_intersection_out;
+      kernTakeMeshIntersection << <dim3(numPathIntersections + blockSize1d - 1 / blockSize1d), blockSize1d >> >(
+        numPathIntersections, dev_paths, dev_pm_intersection_out, dev_pm_intersection_dists_out);
+#endif
       checkCUDAError("trace one bounce");
       cudaDeviceSynchronize();
 #if CACHEFIRSTBOUNCE == 1
