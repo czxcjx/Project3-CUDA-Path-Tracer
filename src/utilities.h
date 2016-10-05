@@ -23,4 +23,8 @@ namespace utilityCore {
     extern glm::mat4 buildTransformationMatrix(glm::vec3 translation, glm::vec3 rotation, glm::vec3 scale);
     extern std::string convertIntToString(int number);
     extern std::istream& safeGetline(std::istream& is, std::string& t); //Thanks to http://stackoverflow.com/a/6089413
+    
+    extern glm::vec3 vecMin(glm::vec3 a, glm::vec3 b);
+    extern glm::vec3 vecMax(glm::vec3 a, glm::vec3 b);
+    extern bool aabbIntersect(glm::vec3 aMin, glm::vec3 aMax, glm::vec3 bMin, glm::vec3 bMax);
 }

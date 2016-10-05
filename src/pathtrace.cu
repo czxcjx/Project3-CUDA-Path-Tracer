@@ -76,16 +76,20 @@ static glm::vec3 * dev_image = NULL;
 static Geom * dev_geoms = NULL;
 static Material * dev_materials = NULL;
 static PathSegment * dev_paths = NULL;
+// TODO: static variables for device memory, any extra info you need, etc
 static PathSegment * dev_cached_paths = NULL;
 static Mesh * dev_meshes = NULL;
 static Triangle * dev_triangles = NULL;
-// TODO: static variables for device memory, any extra info you need, etc
-// ...
+static glm::ivec2 * dev_path_mesh_intersections = NULL;
 
 void pathtraceInit(Scene *scene) {
 	hst_scene = scene;
 	const Camera &cam = hst_scene->state.camera;
 	const int pixelcount = cam.resolution.x * cam.resolution.y;
+  int meshcount = 0;
+  for (int i = 0; i < scene->geoms.size(); i++) {
+    if (scene->geoms[i].type == MESH) meshcount++;
+  }
 
 	cudaMalloc(&dev_image, pixelcount * sizeof(glm::vec3));
 	cudaMemset(dev_image, 0, pixelcount * sizeof(glm::vec3));
@@ -104,6 +108,7 @@ void pathtraceInit(Scene *scene) {
   cudaMemcpy(dev_meshes, scene->meshes.data(), scene->meshes.size() * sizeof(Mesh), cudaMemcpyHostToDevice);
   cudaMalloc(&dev_triangles, scene->triangles.size() * sizeof(Triangle));
   cudaMemcpy(dev_triangles, scene->triangles.data(), scene->triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
+  cudaMalloc(&dev_path_mesh_intersections, pixelcount * meshcount * sizeof(glm::ivec2));
 
 	checkCUDAError("pathtraceInit");
 }
@@ -277,16 +282,32 @@ __global__ void partialGather(int nPaths, glm::vec3 * image, PathSegment * itera
 	}
 }
 
-// Add the current iteration's output to the overall image
-__global__ void finalGather(int nPaths, glm::vec3 * image, PathSegment * iterationPaths)
-{
-	int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+__global__ void kernCalculateMeshBoundingBoxIntersections(int nPaths, int nMeshes, int meshStart, PathSegment * iterationPaths,
+  Geom * geoms, Mesh * meshes, glm::ivec2 * intersections) {
+  int pathIndex = (blockIdx.x * blockDim.x) + threadIdx.x;
+  int meshIndex = (blockIdx.y * blockDim.y) + threadIdx.y;
+  if (pathIndex < nPaths && meshIndex < nMeshes) {
+    int idx = pathIndex * nMeshes + meshIndex;
+    Geom & meshGeom = geoms[meshIndex + meshStart];
+    Mesh & mesh = meshes[meshGeom.meshid];
+    PathSegment & path = iterationPaths[pathIndex];
+    Ray r = path.ray;
 
-	if (index < nPaths)
-	{
-		PathSegment iterationPath = iterationPaths[index];
-		image[iterationPath.pixelIndex] += iterationPath.color;
-	}
+    glm::vec3 ro = multiplyMV(meshGeom.inverseTransform, glm::vec4(r.origin, 1.0f));
+    glm::vec3 rd = glm::normalize(multiplyMV(meshGeom.inverseTransform, glm::vec4(r.direction, 0.0f)));
+    Ray rt;
+    rt.origin = ro;
+    rt.direction = rd;
+
+    float tmin, tmax;
+    glm::vec3 tmin_n, tmax_n;
+    if (orientedBoxIntersection(mesh.boxMin, mesh.boxMax, path.ray, tmin, tmax, tmin_n, tmax_n)) {
+      intersections[idx] = glm::ivec2(pathIndex, meshIndex);
+    }
+    else {
+      intersections[idx] = glm::ivec2(-1, -1);
+    }
+  }
 }
 
 struct HasNoBounces {

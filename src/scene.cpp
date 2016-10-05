@@ -90,7 +90,7 @@ int Scene::loadMesh(string meshid) {
         }
       }
       int endCount = triangles.size();
-      meshes.push_back(Mesh(startCount, endCount, triangles));
+      meshes.push_back(Mesh(startCount, endCount, triangles, triangles));
     }
     else {
       cout << "Could not read mesh obj file!" << endl;

@@ -178,7 +178,7 @@ __host__ __device__ float meshIntersectionTest(Geom geom, Mesh * meshes, Triangl
   }
 
 	float t_min = FLT_MAX;
-	for (int i = mesh.triangleStart; i < mesh.triangleEnd; i++) {
+	/*for (int i = mesh.triangleStart; i < mesh.triangleEnd; i++) {
     glm::vec3 result;
     bool hasIntersect = glm::intersectRayTriangle(rt.origin, rt.direction, triangles[i].vertices[0], triangles[i].vertices[1], triangles[i].vertices[2], result);
     glm::vec3 tmp_intersect = getPointOnRay(rt, result.z);
@@ -189,7 +189,31 @@ __host__ __device__ float meshIntersectionTest(Geom geom, Mesh * meshes, Triangl
 			normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(triangles[i].normal, 0.0f)));
 			outside = glm::dot(rt.direction, normal) < 0.0f;
 		}
-	}
+	}*/
+
+  glm::vec3 gridDim = (mesh.boxMax - mesh.boxMin) / (float)GRID_SIZE;
+
+  for (int x = 0; x < GRID_SIZE; x++) {
+    for (int y = 0; y < GRID_SIZE; y++) {
+      for (int z = 0; z < GRID_SIZE; z++) {
+        glm::vec3 gridMin = mesh.boxMin + glm::vec3(x, y, z) * gridDim;
+        if (orientedBoxIntersection(gridMin, gridMin + gridDim, rt, tmin, tmax, tmin_n, tmax_n)) {
+          for (int i = mesh.gridIdx[x][y][z].start; i < mesh.gridIdx[x][y][z].end; i++) {
+            glm::vec3 result;
+            bool hasIntersect = glm::intersectRayTriangle(rt.origin, rt.direction, triangles[i].vertices[0], triangles[i].vertices[1], triangles[i].vertices[2], result);
+            glm::vec3 tmp_intersect = getPointOnRay(rt, result.z);
+            float t = glm::length(rt.origin - tmp_intersect);
+            if (t > 1e-3 && t_min > t) {
+              t_min = t;
+              intersectionPoint = multiplyMV(geom.transform, glm::vec4(tmp_intersect, 1.0f));
+              normal = glm::normalize(multiplyMV(geom.invTranspose, glm::vec4(triangles[i].normal, 0.0f)));
+              outside = glm::dot(rt.direction, normal) < 0.0f;
+            }
+          }
+        }
+      }
+    }
+  }
 	if (t_min == FLT_MAX) {
 		return -1.0f;
 	}

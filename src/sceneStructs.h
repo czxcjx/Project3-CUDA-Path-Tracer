@@ -4,13 +4,16 @@
 #include <vector>
 #include <cuda_runtime.h>
 #include "glm/glm.hpp"
+#include "utilities.h"
 
 #define BACKGROUND_COLOR (glm::vec3(0.0f))
 
+#define GRID_SIZE 4
+
 enum GeomType {
-  SPHERE,
-  CUBE,
-  MESH,
+  SPHERE = 0,
+  CUBE = 1,
+  MESH = 2,
 };
 
 struct Ray {
@@ -42,9 +45,6 @@ struct Triangle {
   }
 };
 
-
-
-
 struct Mesh {
   int triangleStart;
   int triangleEnd;
@@ -52,17 +52,58 @@ struct Mesh {
   glm::vec3 boxMin;
   glm::vec3 boxMax;
 
-  Mesh(int start, int end, std::vector<Triangle> & triangles) {
+  struct {
+    int start, end;
+  } gridIdx[GRID_SIZE][GRID_SIZE][GRID_SIZE];
+
+  Mesh(int start, int end, std::vector<Triangle> & triangles, std::vector<Triangle> & gridTriangles) {
     triangleStart = start;
     triangleEnd = end;
+
+    std::vector<Triangle> grid[GRID_SIZE][GRID_SIZE][GRID_SIZE];
+
+    boxMin = glm::vec3(FLT_MAX, FLT_MAX, FLT_MAX);
+    boxMax = glm::vec3(FLT_MIN, FLT_MIN, FLT_MIN);
+
     for (int i = triangleStart; i < triangleEnd; i++) {
       for (int j = 0; j < 3; j++) {
-        boxMin.x = glm::min(boxMin.x, triangles[i].vertices[j].x);
-        boxMin.y = glm::min(boxMin.y, triangles[i].vertices[j].y);
-        boxMin.z = glm::min(boxMin.z, triangles[i].vertices[j].z);
-        boxMax.x = glm::max(boxMax.x, triangles[i].vertices[j].x);
-        boxMax.y = glm::max(boxMax.y, triangles[i].vertices[j].y);
-        boxMax.z = glm::max(boxMax.z, triangles[i].vertices[j].z);
+        boxMin = utilityCore::vecMin(boxMin, triangles[i].vertices[j]);
+        boxMax = utilityCore::vecMax(boxMax, triangles[i].vertices[j]);
+      }
+    }
+
+    glm::vec3 boxDim = boxMax - boxMin;
+
+    for (int i = triangleStart; i < triangleEnd; i++) {
+      glm::vec3 triangleMin = glm::vec3(FLT_MAX, FLT_MAX, FLT_MAX);
+      glm::vec3 triangleMax = glm::vec3(FLT_MIN, FLT_MIN, FLT_MIN);
+      for (int j = 0; j < 3; j++) {
+        triangleMin = utilityCore::vecMin(triangleMin, triangles[i].vertices[j]);
+        triangleMax = utilityCore::vecMax(triangleMax, triangles[i].vertices[j]);
+      }
+      for (int x = 0; x < GRID_SIZE; x++) {
+        for (int y = 0; y < GRID_SIZE; y++) {
+          for (int z = 0; z < GRID_SIZE; z++) {
+
+            glm::vec3 gridMin = boxMin + glm::vec3(x, y, z) * (boxDim / (float)GRID_SIZE);
+            glm::vec3 gridMax = boxMin + glm::vec3(x + 1, y + 1, z + 1) * (boxDim / (float)GRID_SIZE);
+
+            if (utilityCore::aabbIntersect(triangleMin, triangleMax, gridMin, gridMax)) {
+              grid[x][y][z].push_back(triangles[i]);
+            }
+          }
+        }
+      }
+    }
+    for (int x = 0; x < GRID_SIZE; x++) {
+      for (int y = 0; y < GRID_SIZE; y++) {
+        for (int z = 0; z < GRID_SIZE; z++) {
+          gridIdx[x][y][z].start = gridTriangles.size();
+          for (int i = 0; i < grid[x][y][z].size(); i++) {
+            gridTriangles.push_back(grid[x][y][z][i]);
+          }
+          gridIdx[x][y][z].end = gridTriangles.size();
+        }
       }
     }
   }
@@ -116,4 +157,3 @@ struct PathSegment {
   bool insideRefractiveObject;
   ShadeableIntersection intersection;
 };
-

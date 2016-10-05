@@ -110,3 +110,24 @@ std::istream& utilityCore::safeGetline(std::istream& is, std::string& t) {
         }
     }
 }
+
+glm::vec3 utilityCore::vecMin(glm::vec3 a, glm::vec3 b) {
+  glm::vec3 ret;
+  ret.x = glm::min(a.x, b.x);
+  ret.y = glm::min(a.y, b.y);
+  ret.z = glm::min(a.z, b.z);
+  return ret;
+}
+
+glm::vec3 utilityCore::vecMax(glm::vec3 a, glm::vec3 b) {
+  glm::vec3 ret;
+  ret.x = glm::max(a.x, b.x);
+  ret.y = glm::max(a.y, b.y);
+  ret.z = glm::max(a.z, b.z);
+  return ret;
+}
+
+bool utilityCore::aabbIntersect(glm::vec3 aMin, glm::vec3 aMax, glm::vec3 bMin, glm::vec3 bMax) {
+  return (aMin.x <= bMax.x && aMax.x >= bMin.x) && (aMin.y <= bMax.y && aMax.y >= bMin.y) &&
+    (aMin.z <= bMax.z && aMax.z >= bMin.z);
+}
