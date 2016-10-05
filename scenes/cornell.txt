@@ -48,8 +48,18 @@ REFR        0
 REFRIOR     0
 EMITTANCE   0
 
-// Glass
+// Specular red
 MATERIAL 5
+RGB         .85 .35 .35
+SPECEX      10
+SPECRGB     .98 .98 .98
+REFL        1
+REFR        0
+REFRIOR     0
+EMITTANCE   0
+
+// Glass
+MATERIAL 6
 RGB         0.8 0.8 0.8
 SPECEX      200
 SPECRGB     .5 .5 .5
@@ -57,7 +67,6 @@ REFL        0
 REFR        1
 REFRIOR     3
 EMITTANCE   0
-
 // Camera
 CAMERA
 RES         800 800
@@ -118,19 +127,15 @@ TRANS       5 5 0
 ROTAT       0 0 0
 SCALE       .01 10 10
 
-// Sphere
-OBJECT 6
-sphere
-material 5
-TRANS       2 2 2
-ROTAT       0 0 0
-SCALE       3 3 3
-
 // Mesh
-OBJECT 7
+OBJECT 6
 mesh
 mesh 0
-material 2
-TRANS       -2 2 2
+material 5
+TRANS       0 2 0
 ROTAT       0 0 0
-SCALE       3 3 3
+SCALE       0.03 0.03 0.03
+
+// Teapot
+MESH 0
+scenes/teapot.obj

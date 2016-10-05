@@ -4,6 +4,10 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtx/string_cast.hpp>
 
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+
+
 Scene::Scene(string filename) {
 	cout << "Reading scene from " << filename << " ..." << endl;
 	cout << " " << endl;
@@ -30,39 +34,69 @@ Scene::Scene(string filename) {
 				loadCamera();
 				cout << " " << endl;
 			}
+      else if (strcmp(tokens[0].c_str(), "MESH") == 0) {
+        loadMesh(tokens[1]);
+        cout << " " << endl;
+      }
 		}
 	}
+}
 
-	Mesh m;
-	m.numTriangles = 4;
-	m.triangles = new Triangle[4];
-	glm::vec3 top(0, 0, 1);
-	glm::vec3 v1(1, 0, 0);
-	glm::vec3 v2(0, -1, 0);
-	glm::vec3 v3(0, 1, 0);
+int Scene::loadMesh(string meshid) {
+  int id = atoi(meshid.c_str());
+  if (id != meshes.size()) {
+    cout << "ERROR: MESH ID does not match expected number of meshes" << endl;
+    return -1;
+  }
+  else {
+    cout << "Loading Mesh " << id << "..." << endl;
+    string line;
+    utilityCore::safeGetline(fp_in, line);
+    if (!line.empty() && fp_in.good()) {
+      tinyobj::attrib_t attrib;
+      vector<tinyobj::shape_t> shapes;
+      vector<tinyobj::material_t> materials;
+      string err;
+      cout << "Loading mesh file: " << line << endl;
+      bool ret = tinyobj::LoadObj(&attrib, &shapes, &materials, &err, line.c_str());
+      if (!err.empty()) {
+        cout << "Error: " << err << endl;
+      }
+      if (!ret) {
+        cout << "Could not load!" << endl;
+      }
+      int startCount = triangles.size();
 
-	m.triangles[0].vertices[0] = top;
-	m.triangles[0].vertices[1] = v1;
-	m.triangles[0].vertices[2] = v2;
-
-	m.triangles[1].vertices[0] = top;
-	m.triangles[1].vertices[1] = v2;
-	m.triangles[1].vertices[2] = v3;
-
-	m.triangles[2].vertices[0] = top;
-	m.triangles[2].vertices[1] = v3;
-	m.triangles[2].vertices[2] = v1;
-
-	m.triangles[3].vertices[0] = v1;
-	m.triangles[3].vertices[1] = v2;
-	m.triangles[3].vertices[2] = v3;
-
-	for (int i = 0; i < 4; i++) {
-		m.triangles[i].normal = glm::normalize(glm::cross(m.triangles[i].vertices[1] - m.triangles[i].vertices[0],
-			m.triangles[i].vertices[2] - m.triangles[i].vertices[0]));
-	}
-
-	meshes.push_back(m);
+      for (int i = 0; i < shapes.size(); i++) {
+        int index_offset = 0;
+        for (int j = 0; j < shapes[i].mesh.num_face_vertices.size(); j++) {
+          int fv = shapes[i].mesh.num_face_vertices[j];
+          if (fv != 3) {
+            cout << "Non-triangular face!" << endl;
+            index_offset += fv;
+            continue;
+          }
+          glm::vec3 verts[3];
+          for (int k = 0; k < 3; k++) {
+            tinyobj::index_t idx = shapes[i].mesh.indices[index_offset + k];
+            verts[k] = glm::vec3(
+              attrib.vertices[3 * idx.vertex_index + 0],
+              attrib.vertices[3 * idx.vertex_index + 1],
+              attrib.vertices[3 * idx.vertex_index + 2]
+            );
+          }
+          index_offset += fv;
+          triangles.push_back(Triangle(verts[0], verts[1], verts[2]));
+        }
+      }
+      int endCount = triangles.size();
+      meshes.push_back(Mesh(startCount, endCount, triangles));
+    }
+    else {
+      cout << "Could not read mesh obj file!" << endl;
+      return -1;
+    }
+  }
 }
 
 int Scene::loadGeom(string objectid) {

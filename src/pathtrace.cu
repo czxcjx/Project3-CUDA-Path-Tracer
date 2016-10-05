@@ -78,7 +78,7 @@ static Material * dev_materials = NULL;
 static PathSegment * dev_paths = NULL;
 static PathSegment * dev_cached_paths = NULL;
 static Mesh * dev_meshes = NULL;
-int num_meshes;
+static Triangle * dev_triangles = NULL;
 // TODO: static variables for device memory, any extra info you need, etc
 // ...
 
@@ -100,15 +100,10 @@ void pathtraceInit(Scene *scene) {
 
 	// TODO: initialize any extra device memeory you need
 	cudaMalloc(&dev_cached_paths, pixelcount * sizeof(PathSegment));
-	num_meshes = scene->meshes.size();
-	cudaMalloc(&dev_meshes, num_meshes * sizeof(Mesh));
-	cudaMemcpy(dev_meshes, scene->meshes.data(), num_meshes * sizeof(Mesh), cudaMemcpyHostToDevice);
-	for (int i = 0; i < num_meshes; i++) {
-		cudaMalloc(&dev_meshes[i].triangles, scene->meshes[i].numTriangles * sizeof(Triangle));
-		cudaMemcpy(dev_meshes[i].triangles, scene->meshes[i].triangles, scene->meshes[i].numTriangles * sizeof(Triangle), cudaMemcpyHostToDevice);
-	}
-
-	printf("Hmm...\n");
+	cudaMalloc(&dev_meshes, scene->meshes.size() * sizeof(Mesh));
+  cudaMemcpy(dev_meshes, scene->meshes.data(), scene->meshes.size() * sizeof(Mesh), cudaMemcpyHostToDevice);
+  cudaMalloc(&dev_triangles, scene->triangles.size() * sizeof(Triangle));
+  cudaMemcpy(dev_triangles, scene->triangles.data(), scene->triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
 
 	checkCUDAError("pathtraceInit");
 }
@@ -120,10 +115,8 @@ void pathtraceFree() {
 	cudaFree(dev_materials);
 	// TODO: clean up any extra device memory you created
 	cudaFree(dev_cached_paths);
-	for (int i = 0; i < num_meshes; i++) {
-		cudaFree(dev_meshes[i].triangles);
-	}
 	cudaFree(dev_meshes);
+  cudaFree(dev_triangles);
 
 	checkCUDAError("pathtraceFree");
 }
@@ -166,7 +159,8 @@ __global__ void pathTraceOneBounce(
 	, PathSegment * pathSegments
 	, Geom * geoms
 	, int geoms_size
-	, Mesh * meshes)
+	, Mesh * meshes
+  , Triangle * triangles)
 {
 	int path_index = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -204,7 +198,7 @@ __global__ void pathTraceOneBounce(
 			}
 			else if (geom.type == MESH)
 			{
-				t = meshIntersectionTest(geom, meshes, pathSegment.ray, tmp_intersect, tmp_normal, outside);
+				t = meshIntersectionTest(geom, meshes, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside);
 			}
 			// TODO: add more intersection tests here... triangle? metaball? CSG?
 			// Compute the minimum t from the intersection tests to determine what
@@ -380,7 +374,6 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 
 	bool iterationComplete = false;
 	while (!iterationComplete) {
-		printf("HI\n");
 		dim3 numblocksPathSegmentTracing = (num_pathsInFlight + blockSize1d - 1) / blockSize1d;
 
 		// tracing
@@ -394,6 +387,7 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 				, dev_geoms
 				, hst_scene->geoms.size()
 				, dev_meshes
+        , dev_triangles
 				);
 			checkCUDAError("trace one bounce");
 			cudaDeviceSynchronize();
@@ -420,8 +414,6 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 #if GROUPBYMAT == 1
 		thrust::sort(dev_thrust_paths, dev_thrust_paths + num_pathsInFlight, SortByMaterial());
 #endif
-
-		printf("BYE\n");
 
 		simpleBSDFShader << <numblocksPathSegmentTracing, blockSize1d >> > (
 			iter,
