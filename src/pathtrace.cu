@@ -19,6 +19,7 @@
 #define GROUPBYMAT 0
 #define CACHEFIRSTBOUNCE 1
 #define CALCMESHSEPARATELY 1
+#define ANTIALIAS_SAMPLE_SIDE 4
 
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
@@ -74,6 +75,7 @@ __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution,
 
 static Scene * hst_scene = NULL;
 static glm::vec3 * dev_image = NULL;
+static glm::vec3 * dev_final_image = NULL;
 static Geom * dev_geoms = NULL;
 static Material * dev_materials = NULL;
 static PathSegment * dev_paths = NULL;
@@ -92,9 +94,20 @@ int numGeoms = 0;
 void pathtraceInit(Scene *scene) {
   hst_scene = scene;
   const Camera &cam = hst_scene->state.camera;
+#if ANTIALIAS_SAMPLE_SIDE == 0
   const int pixelcount = cam.resolution.x * cam.resolution.y;
+#else
+  const int actual_pixelcount = cam.resolution.x * cam.resolution.y;
+  const int pixelcount = actual_pixelcount * ANTIALIAS_SAMPLE_SIDE * ANTIALIAS_SAMPLE_SIDE;
+#endif
 
   cudaMalloc(&dev_image, pixelcount * sizeof(glm::vec3));
+  cudaMemset(dev_image, 0, pixelcount * sizeof(glm::vec3));
+#if ANTIALIAS_SAMPLE_SIDE != 0
+  cudaMalloc(&dev_final_image, actual_pixelcount * sizeof(glm::vec3));
+#else
+  dev_final_image = dev_image;
+#endif
   cudaMemset(dev_image, 0, pixelcount * sizeof(glm::vec3));
   cudaMalloc(&dev_paths, pixelcount * sizeof(PathSegment));
 
@@ -146,6 +159,10 @@ void pathtraceFree() {
   cudaFree(dev_pm_intersection_dists_out);
 #endif
 
+#if ANTIALIAS_SAMPLE_SIDE != 0
+  cudaFree(dev_final_image);
+#endif
+
   checkCUDAError("pathtraceFree");
 }
 
@@ -163,6 +180,7 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
   int y = (blockIdx.y * blockDim.y) + threadIdx.y;
 
   if (x < cam.resolution.x && y < cam.resolution.y) {
+#if ANTIALIAS_SAMPLE_SIDE == 0
     int index = x + (y * cam.resolution.x);
     PathSegment & segment = pathSegments[index];
 
@@ -178,6 +196,25 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
     segment.pixelIndex = index;
     segment.remainingBounces = traceDepth;
     segment.insideRefractiveObject = false;
+#else
+    for (int i = 0; i < ANTIALIAS_SAMPLE_SIDE; i++) {
+      for (int j = 0; j < ANTIALIAS_SAMPLE_SIDE; j++) {
+        int index = (x + (y * cam.resolution.x)) + 4 * j + i;
+        PathSegment & segment = pathSegments[index];
+        segment.ray.origin = cam.position;
+        segment.color = glm::vec3(1.0f, 1.0f, 1.0f);
+
+        segment.ray.direction = glm::normalize(cam.view // TODO: finish antialias
+          - cam.right * cam.pixelLength.x * ((float)x - 0.5f - (float)cam.resolution.x * 0.5f)
+          - cam.up * cam.pixelLength.y * ((float)y - 0.5f - (float)cam.resolution.y * 0.5f)
+          );
+
+        segment.pixelIndex = index;
+        segment.remainingBounces = traceDepth;
+        segment.insideRefractiveObject = false;
+      }
+    }
+#endif
   }
 }
 
