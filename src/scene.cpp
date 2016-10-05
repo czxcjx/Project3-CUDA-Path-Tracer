@@ -7,6 +7,11 @@
 #define TINYOBJLOADER_IMPLEMENTATION
 #include "tiny_obj_loader.h"
 
+struct SortGeomByType {
+  bool operator()(Geom & g1, Geom & g2) {
+    return g1.type < g2.type;
+  }
+};
 
 Scene::Scene(string filename) {
 	cout << "Reading scene from " << filename << " ..." << endl;
@@ -169,7 +174,12 @@ int Scene::loadGeom(string objectid) {
 		newGeom.inverseTransform = glm::inverse(newGeom.transform);
 		newGeom.invTranspose = glm::inverseTranspose(newGeom.transform);
 
-		geoms.push_back(newGeom);
+    if (newGeom.type == MESH) {
+      meshGeoms.push_back(newGeom);
+    }
+    else {
+      geoms.push_back(newGeom);
+    }
 		return 1;
 	}
 }
