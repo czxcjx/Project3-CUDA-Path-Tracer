@@ -6,8 +6,7 @@ CUDA Path Tracer
 * Name: Zhan Xiong Chin
 * Tested on: Windows 7 Professional, Intel(R) Xeon(R) CPU E5-1630 v4 @ 3.70 GHz 3.70 GHz, GTX 1070 8192MB (SIG Lab)
 
-Overview
-========
+## Overview
 
 ![](img/cornell_example.5000samp.png)
 
@@ -29,12 +28,12 @@ Furthermore, this path-tracer implements the following additional features:
 * Model loading from .OBJ files
 	* Also includes automatic partitioning of model into sub-models
 
-Build Instructions
-==================
+## Build Instructions
+
 [See here](https://github.com/CIS565-Fall-2016/Project0-CUDA-Getting-Started/blob/master/INSTRUCTION.md)
 
-Diffuse and specular materials
-==============================
+## Diffuse and specular materials
+
 Each time a ray hits an object, it has a 50-50 chance of either doing a diffuse bounce or a specular bounce. A diffuse bounce is chosen from a hemisphere normal to the plane of intersection using a cosine-weighted function. On the other hand, a specular bounce uses the formulas from [*GPU Gems 3*, Chapter 20](http://http.developer.nvidia.com/GPUGems3/gpugems3_ch20.html) to generate a random specular ray. With increasing specular exponent, the potential range of the specular bounce gets narrower, forming a sharper reflective image. 
 
 ![](img/specular_and_diffuse.5000samp.png)
@@ -43,9 +42,9 @@ From left to right: diffuse, specular exponent 25, specular exponent 100, perfec
 
 It may be possible to achieve some additional speed-up in convergence of the image by tweaking the bounce probability. In particular, a material with a higher specular exponent may be able to render correctly with a smaller proportion of specular bounces, since the variance in angle of the reflected ray is smaller.
 
-Refraction
-==========
-Refractive objects do not make use of diffuse bounces. Instead, the exact reflection or refraction of the ray is calculated. [Schlick's approximation](https://en.wikipedia.org/wiki/Schlick%27s_approximation) is used to calculate Fresnel effects.
+## Refraction
+
+Refractive objects do not make use of diffuse bounces. Instead, the exact reflection or refraction of the ray is calculated. [Schlick's approximation](https://en.wikipedia.org/wiki/Schlick%27s_approximation) is used to calculate Fresnel effects (i.e. partial reflection).
 
 ![](img/refractive.5000samp.png)
 
@@ -53,8 +52,8 @@ Refractive indices from left to right: 1.2, 1.6, 2.4.
 
 As compared to a CPU, refraction may impact performance on the GPU slightly, as having a refractive material causes additional branching to occur in the shader kernel. In principle, it might be possible to optimize this by groupin rays of the same material together (see below), though in practice this is not likely to be the case.
 
-Anti-aliasing
-=============
+## Anti-aliasing
+
 Stochastic sampling is used for anti-aliasing. In other words, each pixel is split up into some number of subpixels, and the color is taken as an average of random rays from each subpixel.
 
 Below, the image on the left is anti-aliased (4 sub-pixels per pixel, 5000 iterations), whereas the image on the right is not anti-aliased (20000 iterations). The effect of anti-aliasing can be clearly seen on the borders of the sphere as well as the base of the wall.
@@ -66,8 +65,8 @@ If the number of iterations is scaled correspondingly (e.g. as above), anti-alia
  However, this does not work together with first-bounce caching, since the first bounce is no longer deterministic. Thus, the overall impact on performance is likely to end up the same. If non-stochastic anti-aliasing were used instead (e.g. using the same ray for each sub-pixel), we could still preserve the benefits of both. This is also a feature that scales well on the GPU, since increasing the number of rays parallelizes better than on a CPU.
 
 
-Model loading and rendering
-===========================
+## Model loading and rendering
+
 [tinyObjLoader](http://syoyo.github.io/tinyobjloader/) was used for model loading.
 
 For testing, the Utah teapot model was used (~22000 triangles). Due to the large number of triangle-ray intersections required, performance slowed down significantly. Two methods were used to improve performance. 
@@ -88,18 +87,18 @@ The GPU version is much faster than the CPU version, since ray-triangle or ray-b
 
 While both of the above speed-ups are much harder to implement on the GPU as compared to the CPU, they would allow the time needed for bounding box intersection to scale linearly rather than cubically, while decreasing triangle intersection time for complex models. Since most of the time is spent in these two kernels, performance would improve significantly if either one is successfully implemented.
 
-Path compaction
-===============
+## Path compaction
+
 Path compaction achieves a significant speed-up, especially when there are a large number of polygons in a scene. As can be seen from the graph in the previous section, the number of rays drops significantly as the depth decreases. This has a major impact on performance for open scenes (i.e. scenes where rays can escape), but would not be seen for closed scenes (e.g. a closed room).
 
-First-bounce caching
-====================
+## First-bounce caching
+
 For the non anti-aliased implementation, the first bounce of the ray can be cached, as it is deterministic. This improves performance significantly in complex scenes.
 
 ![](img/graph_firstbounce_caching.png)
 
 For example, the teapot model above was rendered with and without first bounce caching over a number of depths. Caching consistently improved the performance of the rendering by 10%. This is because the initial bounce calculation is the most expensive, having the largest number of rays to intersect. 
 
-Grouping by material
-====================
+## Grouping by material
+
 It is also possible to group rays that intersect the same material to make them contiguous in memory before shading. However, from the kernel breakdown above, the main bottleneck for the renderer is not the shading, but rather the intersection computation. Thus, it is unlikely that this would have a positive impact. Implementing this in the above scene led to a 20% slowdown in rendering, supporting this hypothesis.
