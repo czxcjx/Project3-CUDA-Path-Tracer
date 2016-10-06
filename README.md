@@ -8,11 +8,12 @@ CUDA Path Tracer
 
 Overview
 ========
-GPU-based path tracer. Renders by casting rays from the camera and bouncing them around the scene until they hit a light.
 
 ![](img/cornell_example.5000samp.png)
 
-This path-tracer implements the core features:
+5000 iterations, ~1h rendering time
+
+GPU-based path tracer. Renders by casting rays from the camera and bouncing them around the scene until they hit a light. This path-tracer implements the core features:
 
 * Path compaction of out-of-scene rays
 * First bounce caching
@@ -60,14 +61,16 @@ Below, the image on the left is anti-aliased (4 sub-pixels per pixel, 5000 itera
 
 ![](img/crop_cornell.antialiased.5000samp.png) ![](img/crop_cornell_aliased.20000samp.png)
 
-If the number of iterations is scaled correspondingly (e.g. as above), anti-aliasing can result in slightly higher performance, as there need to be less kernel launches and more ray intersections can be calculated in parallel. However, this does not work together with first-bounce caching, since the first bounce is no longer deterministic. Thus, the overall impact on performance is likely to end up the same. For instance, the above anti-aliased image took X seconds to render, compared to the Y seconds for the non-anti-aliased image. If non-stochastic anti-aliasing were used instead (e.g. using the same ray for each sub-pixel), we could still preserve the benefits of both. This is also a feature that scales well on the GPU, since increasing the number of rays parallelizes better than on a CPU.
+If the number of iterations is scaled correspondingly (e.g. as above), anti-aliasing can result in slightly higher performance, as there need to be less kernel launches and more ray intersections can be calculated in parallel. From experimentation, the anti-aliased image seems to take approximately 5-10% faster to render than the non-anti-aliased one.
+
+ However, this does not work together with first-bounce caching, since the first bounce is no longer deterministic. Thus, the overall impact on performance is likely to end up the same. If non-stochastic anti-aliasing were used instead (e.g. using the same ray for each sub-pixel), we could still preserve the benefits of both. This is also a feature that scales well on the GPU, since increasing the number of rays parallelizes better than on a CPU.
 
 
 Model loading and rendering
 ===========================
 [tinyObjLoader](http://syoyo.github.io/tinyobjloader/) was used for model loading.
 
-For testing, the Utah teapot model was used (X triangles). Due to the large number of triangle-ray intersections required, performance slowed down significantly. Two methods were used to improve performance. 
+For testing, the Utah teapot model was used (~22000 triangles). Due to the large number of triangle-ray intersections required, performance slowed down significantly. Two methods were used to improve performance. 
 
 ![](img/teapot.3000samp.png)
 
