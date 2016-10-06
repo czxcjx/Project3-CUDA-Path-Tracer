@@ -19,7 +19,7 @@
 #define GROUPBYMAT 0
 #define CACHEFIRSTBOUNCE 1
 #define CALCMESHSEPARATELY 1
-#define ANTIALIAS_SAMPLE_SIDE 4
+#define ANTIALIAS_SAMPLE_SIDE 0
 
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
@@ -187,7 +187,6 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
     segment.ray.origin = cam.position;
     segment.color = glm::vec3(1.0f, 1.0f, 1.0f);
 
-    // TODO: implement antialiasing by jittering the ray
     segment.ray.direction = glm::normalize(cam.view
       - cam.right * cam.pixelLength.x * ((float)x - (float)cam.resolution.x * 0.5f)
       - cam.up * cam.pixelLength.y * ((float)y - (float)cam.resolution.y * 0.5f)
@@ -197,16 +196,19 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
     segment.remainingBounces = traceDepth;
     segment.insideRefractiveObject = false;
 #else
+    float subpixel_side = 1.0f / (float)ANTIALIAS_SAMPLE_SIDE;
+    thrust::default_random_engine rng = makeSeededRandomEngine(iter,  x + y * cam.resolution.x, traceDepth);
+    thrust::uniform_real_distribution<float> u(0, subpixel_side);
     for (int i = 0; i < ANTIALIAS_SAMPLE_SIDE; i++) {
       for (int j = 0; j < ANTIALIAS_SAMPLE_SIDE; j++) {
-        int index = (x + (y * cam.resolution.x)) + 4 * j + i;
+        int index = (x + (y * cam.resolution.x)) * ANTIALIAS_SAMPLE_SIDE * ANTIALIAS_SAMPLE_SIDE + ANTIALIAS_SAMPLE_SIDE * j + i;
         PathSegment & segment = pathSegments[index];
         segment.ray.origin = cam.position;
         segment.color = glm::vec3(1.0f, 1.0f, 1.0f);
 
-        segment.ray.direction = glm::normalize(cam.view // TODO: finish antialias
-          - cam.right * cam.pixelLength.x * ((float)x - 0.5f - (float)cam.resolution.x * 0.5f)
-          - cam.up * cam.pixelLength.y * ((float)y - 0.5f - (float)cam.resolution.y * 0.5f)
+        segment.ray.direction = glm::normalize(cam.view 
+          - cam.right * cam.pixelLength.x * ((float)x - 0.5f + i * subpixel_side + u(rng) - (float)cam.resolution.x * 0.5f)
+          - cam.up * cam.pixelLength.y * ((float)y - 0.5f + j * subpixel_side + u(rng) - (float)cam.resolution.y * 0.5f)
           );
 
         segment.pixelIndex = index;
@@ -344,6 +346,23 @@ __global__ void partialGather(int nPaths, glm::vec3 * image, PathSegment * itera
   }
 }
 
+// Color using only the parts with no bounces
+__global__ void kernAntialiasGather(int pixelcount, glm::vec3 * final_image, glm::vec3 * image) {
+  int index = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+  if (index < pixelcount)
+  {
+    int subpixel_count = ANTIALIAS_SAMPLE_SIDE * ANTIALIAS_SAMPLE_SIDE;
+    int base_index = index * subpixel_count;
+    glm::vec3 sumColors(0.0f, 0.0f, 0.0f);
+    for (int i = 0; i < subpixel_count; i++) {
+      sumColors += image[base_index + i];
+    }
+    final_image[index] = sumColors / (float)subpixel_count;
+  }
+}
+
+
 __global__ void kernCalculateMeshBoundingBoxIntersections(int nPaths, int nMeshes, PathSegment * iterationPaths,
   Geom * meshgeoms, Mesh * meshes, glm::ivec2 * intersections) {
   int pathIndex = (blockIdx.x * blockDim.x) + threadIdx.x;
@@ -449,7 +468,13 @@ struct ComparePathKey {
 void pathtrace(uchar4 *pbo, int frame, int iter) {
   const int traceDepth = hst_scene->state.traceDepth;
   const Camera &cam = hst_scene->state.camera;
+#if ANTIALIAS_SAMPLE_SIDE == 0
   const int pixelcount = cam.resolution.x * cam.resolution.y;
+  const int actual_pixelcount = pixelcount;
+#else
+  const int actual_pixelcount = cam.resolution.x * cam.resolution.y;
+  const int pixelcount = actual_pixelcount * ANTIALIAS_SAMPLE_SIDE * ANTIALIAS_SAMPLE_SIDE;
+#endif
 
   // 2D block for generating ray from camera
   const dim3 blockSize2d(8, 8);
@@ -491,7 +516,7 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 
   // 
   int depth = 0;
-#if CACHEFIRSTBOUNCE == 1
+#if (CACHEFIRSTBOUNCE == 1 && ANTIALIAS_SAMPLE_SIDE == 0)
   if (iter > 1) {
     cudaMemcpy(dev_paths, dev_cached_paths, pixelcount * sizeof(PathSegment), cudaMemcpyDeviceToDevice);
   }
@@ -499,7 +524,7 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 #endif
     generateRayFromCamera << <blocksPerGrid2d, blockSize2d >> >(cam, iter, traceDepth, dev_paths);
     checkCUDAError("generate camera ray");
-#if CACHEFIRSTBOUNCE == 1
+#if (CACHEFIRSTBOUNCE == 1 && ANTIALIAS_SAMPLE_SIDE == 0)
   }
 #endif
 
@@ -518,7 +543,7 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
     dim3 numblocksPathSegmentTracing = (num_pathsInFlight + blockSize1d - 1) / blockSize1d;
 
     // tracing
-#if CACHEFIRSTBOUNCE == 1
+#if (CACHEFIRSTBOUNCE == 1 && ANTIALIAS_SAMPLE_SIDE == 0)
     if (iter > 1 || depth > 0) {
 #endif
 
@@ -534,49 +559,51 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
         );
 #if CALCMESHSEPARATELY == 1
       // meshes
-      dim3 meshBoxTracing(
-        (num_pathsInFlight + blockSize2d.x - 1) / blockSize2d.x,
-        (hst_scene->meshGeoms.size() + blockSize2d.y - 1) / blockSize2d.y
-        );
-      kernCalculateMeshBoundingBoxIntersections << <meshBoxTracing, blockSize2d >> >(
-        num_pathsInFlight, hst_scene->meshGeoms.size(), dev_paths, dev_meshgeoms, dev_meshes, dev_path_mesh_intersections);
-      thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections = thrust::device_pointer_cast(dev_path_mesh_intersections);
-      int numIntersections = num_pathsInFlight * hst_scene->meshGeoms.size();
-      thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections_end =
-        thrust::remove_if(dev_thrust_path_mesh_intersections, dev_thrust_path_mesh_intersections + numIntersections, IsNonintersection());
-      int numActualIntersections = dev_thrust_path_mesh_intersections_end - dev_thrust_path_mesh_intersections;
-      // printf("Culled from %d to %d intersections\n", numIntersections, numActualIntersections);
-      dim3 meshTracing((numActualIntersections + blockSize1d - 1) / blockSize1d);
-      kernPathTraceMesh << <meshTracing, blockSize1d >> > (
-        numActualIntersections, dev_paths, dev_meshgeoms, dev_meshes, dev_path_mesh_intersections, dev_triangles,
-        dev_path_mesh_intersection_dists);
+      if (hst_scene->meshGeoms.size() > 0) {
+        dim3 meshBoxTracing(
+          (num_pathsInFlight + blockSize2d.x - 1) / blockSize2d.x,
+          (hst_scene->meshGeoms.size() + blockSize2d.y - 1) / blockSize2d.y
+          );
+        kernCalculateMeshBoundingBoxIntersections << <meshBoxTracing, blockSize2d >> >(
+          num_pathsInFlight, hst_scene->meshGeoms.size(), dev_paths, dev_meshgeoms, dev_meshes, dev_path_mesh_intersections);
+        thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections = thrust::device_pointer_cast(dev_path_mesh_intersections);
+        int numIntersections = num_pathsInFlight * hst_scene->meshGeoms.size();
+        thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections_end =
+          thrust::remove_if(dev_thrust_path_mesh_intersections, dev_thrust_path_mesh_intersections + numIntersections, IsNonintersection());
+        int numActualIntersections = dev_thrust_path_mesh_intersections_end - dev_thrust_path_mesh_intersections;
+        // printf("Culled from %d to %d intersections\n", numIntersections, numActualIntersections);
+        dim3 meshTracing((numActualIntersections + blockSize1d - 1) / blockSize1d);
+        kernPathTraceMesh << <meshTracing, blockSize1d >> > (
+          numActualIntersections, dev_paths, dev_meshgeoms, dev_meshes, dev_path_mesh_intersections, dev_triangles,
+          dev_path_mesh_intersection_dists);
 
-      thrust::device_ptr<ShadeableIntersection> dev_thrust_path_mesh_intersection_dists =
-        thrust::device_pointer_cast(dev_path_mesh_intersection_dists);
-      thrust::device_ptr<glm::ivec2> dev_thrust_pm_intersection_out =
-        thrust::device_pointer_cast(dev_pm_intersection_out);
-      thrust::device_ptr<ShadeableIntersection> dev_thrust_pm_intersection_dists_out =
-        thrust::device_pointer_cast(dev_pm_intersection_dists_out);
+        thrust::device_ptr<ShadeableIntersection> dev_thrust_path_mesh_intersection_dists =
+          thrust::device_pointer_cast(dev_path_mesh_intersection_dists);
+        thrust::device_ptr<glm::ivec2> dev_thrust_pm_intersection_out =
+          thrust::device_pointer_cast(dev_pm_intersection_out);
+        thrust::device_ptr<ShadeableIntersection> dev_thrust_pm_intersection_dists_out =
+          thrust::device_pointer_cast(dev_pm_intersection_dists_out);
 
-      thrust::pair<thrust::device_ptr<glm::ivec2>, thrust::device_ptr<ShadeableIntersection>> reductionResult =
-        thrust::reduce_by_key(dev_thrust_path_mesh_intersections,
-        dev_thrust_path_mesh_intersections + numActualIntersections,
-        dev_thrust_path_mesh_intersection_dists,
-        dev_thrust_pm_intersection_out,
-        dev_thrust_pm_intersection_dists_out,
-        ComparePathKey(),
-        TakeMinIntersection());
-      int numPathIntersections = reductionResult.first - dev_thrust_pm_intersection_out;
-      kernTakeMeshIntersection << <dim3(numPathIntersections + blockSize1d - 1 / blockSize1d), blockSize1d >> >(
-        numPathIntersections, dev_paths, dev_pm_intersection_out, dev_pm_intersection_dists_out);
+        thrust::pair<thrust::device_ptr<glm::ivec2>, thrust::device_ptr<ShadeableIntersection>> reductionResult =
+          thrust::reduce_by_key(dev_thrust_path_mesh_intersections,
+          dev_thrust_path_mesh_intersections + numActualIntersections,
+          dev_thrust_path_mesh_intersection_dists,
+          dev_thrust_pm_intersection_out,
+          dev_thrust_pm_intersection_dists_out,
+          ComparePathKey(),
+          TakeMinIntersection());
+        int numPathIntersections = reductionResult.first - dev_thrust_pm_intersection_out;
+        kernTakeMeshIntersection << <dim3(numPathIntersections + blockSize1d - 1 / blockSize1d), blockSize1d >> >(
+          numPathIntersections, dev_paths, dev_pm_intersection_out, dev_pm_intersection_dists_out);
+      }
 #endif
       checkCUDAError("trace one bounce");
       cudaDeviceSynchronize();
-#if CACHEFIRSTBOUNCE == 1
+#if (CACHEFIRSTBOUNCE == 1 && ANTIALIAS_SAMPLE_SIDE == 0)
     }
 #endif
 
-#if CACHEFIRSTBOUNCE == 1
+#if (CACHEFIRSTBOUNCE == 1 && ANTIALIAS_SAMPLE_SIDE == 0)
     // Cache first bounce
     if (iter == 1 && depth == 0) {
       cudaMemcpy(dev_cached_paths, dev_paths, pixelcount * sizeof(PathSegment), cudaMemcpyDeviceToDevice);
@@ -618,18 +645,20 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
   }
 
   // Assemble this iteration and apply it to the image
-  //dim3 numBlocksPixels = (pixelcount + blockSize1d - 1) / blockSize1d;
-  //finalGather << <numBlocksPixels, blockSize1d >> >(num_paths_in_flight, dev_image, dev_paths);
+#if ANTIALIAS_SAMPLE_SIDE != 0
+  dim3 numBlocksPixels = (actual_pixelcount + blockSize1d - 1) / blockSize1d;
+  kernAntialiasGather << <numBlocksPixels, blockSize1d >> >(actual_pixelcount, dev_final_image, dev_image);
+#endif
 
 
   ///////////////////////////////////////////////////////////////////////////
 
   // Send results to OpenGL buffer for rendering
-  sendImageToPBO << <blocksPerGrid2d, blockSize2d >> >(pbo, cam.resolution, iter, dev_image);
+  sendImageToPBO << <blocksPerGrid2d, blockSize2d >> >(pbo, cam.resolution, iter, dev_final_image);
 
   // Retrieve image from GPU
-  cudaMemcpy(hst_scene->state.image.data(), dev_image,
-    pixelcount * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
+  cudaMemcpy(hst_scene->state.image.data(), dev_final_image,
+    actual_pixelcount * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
 
   checkCUDAError("pathtrace");
 }
