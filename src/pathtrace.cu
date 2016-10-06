@@ -19,7 +19,7 @@
 #define GROUPBYMAT 0
 #define CACHEFIRSTBOUNCE 1
 #define CALCMESHSEPARATELY 1
-#define ANTIALIAS_SAMPLE_SIDE 0
+#define ANTIALIAS_SAMPLE_SIDE 2
 
 
 #define FILENAME (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
