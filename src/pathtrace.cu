@@ -547,6 +547,7 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
 
   bool iterationComplete = false;
   while (!iterationComplete) {
+    printf("Depth %d: %d paths\n", depth, num_pathsInFlight);
     dim3 numblocksPathSegmentTracing = (num_pathsInFlight + blockSize1d - 1) / blockSize1d;
 
     // tracing

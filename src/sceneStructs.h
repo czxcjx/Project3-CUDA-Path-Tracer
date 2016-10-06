@@ -8,7 +8,7 @@
 
 #define BACKGROUND_COLOR (glm::vec3(0.0f))
 
-#define GRID_SIZE 2
+#define GRID_SIZE 3
 #define GRID_FULL (GRID_SIZE * GRID_SIZE * GRID_SIZE)
 
 enum GeomType {
