@@ -85,9 +85,9 @@ static Geom * dev_meshgeoms = NULL;
 static Mesh * dev_meshes = NULL;
 static Triangle * dev_triangles = NULL;
 
-static glm::ivec2 * dev_path_mesh_intersections = NULL;
+static glm::ivec3 * dev_path_mesh_intersections = NULL;
 static ShadeableIntersection * dev_path_mesh_intersection_dists = NULL;
-static glm::ivec2 * dev_pm_intersection_out = NULL;
+static glm::ivec3 * dev_pm_intersection_out = NULL;
 static ShadeableIntersection * dev_pm_intersection_dists_out = NULL;
 int numGeoms = 0;
 
@@ -116,9 +116,9 @@ void pathtraceInit(Scene *scene) {
   cudaMemcpy(dev_geoms, scene->geoms.data(), scene->geoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
   cudaMalloc(&dev_meshgeoms, scene->meshGeoms.size() * sizeof(Geom));
   cudaMemcpy(dev_meshgeoms, scene->meshGeoms.data(), scene->meshGeoms.size() * sizeof(Geom), cudaMemcpyHostToDevice);
-  cudaMalloc(&dev_path_mesh_intersections, pixelcount * scene->meshGeoms.size() * sizeof(glm::ivec2));
-  cudaMalloc(&dev_path_mesh_intersection_dists, pixelcount * scene->meshGeoms.size() * sizeof(ShadeableIntersection));
-  cudaMalloc(&dev_pm_intersection_out, pixelcount * sizeof(glm::ivec2));
+  cudaMalloc(&dev_path_mesh_intersections, GRID_FULL * pixelcount * scene->meshGeoms.size() * sizeof(glm::ivec3));
+  cudaMalloc(&dev_path_mesh_intersection_dists, GRID_FULL * pixelcount * scene->meshGeoms.size() * sizeof(ShadeableIntersection));
+  cudaMalloc(&dev_pm_intersection_out, pixelcount * sizeof(glm::ivec3));
   cudaMalloc(&dev_pm_intersection_dists_out, pixelcount * sizeof(ShadeableIntersection));
   numGeoms = scene->geoms.size();
 #else
@@ -364,15 +364,24 @@ __global__ void kernAntialiasGather(int pixelcount, glm::vec3 * final_image, glm
 
 
 __global__ void kernCalculateMeshBoundingBoxIntersections(int nPaths, int nMeshes, PathSegment * iterationPaths,
-  Geom * meshgeoms, Mesh * meshes, glm::ivec2 * intersections) {
+  Geom * meshgeoms, Mesh * meshes, glm::ivec3 * intersections) {
   int pathIndex = (blockIdx.x * blockDim.x) + threadIdx.x;
   int meshIndex = (blockIdx.y * blockDim.y) + threadIdx.y;
-  if (pathIndex < nPaths && meshIndex < nMeshes) {
-    int idx = pathIndex * nMeshes + meshIndex;
+  int gridIndex = (blockIdx.z * blockDim.z) + threadIdx.z;
+  if (pathIndex < nPaths && meshIndex < nMeshes && gridIndex < GRID_FULL) {
+    int idx = pathIndex * nMeshes * GRID_FULL + meshIndex * GRID_FULL + gridIndex;
     Geom & meshGeom = meshgeoms[meshIndex];
     Mesh & mesh = meshes[meshGeom.meshid];
     PathSegment & path = iterationPaths[pathIndex];
     Ray r = path.ray;
+
+    glm::vec3 gridSize = (mesh.boxMax - mesh.boxMin) / (float)GRID_SIZE;
+    glm::vec3 gridMin(
+      gridSize.x * (gridIndex % GRID_SIZE),
+      gridSize.y * ((gridIndex / GRID_SIZE) % GRID_SIZE),
+      gridSize.z * (gridIndex / (GRID_SIZE * GRID_SIZE)));
+    gridMin += mesh.boxMin;
+    glm::vec3 gridMax = gridMin + gridSize;
 
     glm::vec3 ro = multiplyMV(meshGeom.inverseTransform, glm::vec4(r.origin, 1.0f));
     glm::vec3 rd = glm::normalize(multiplyMV(meshGeom.inverseTransform, glm::vec4(r.direction, 0.0f)));
@@ -382,35 +391,33 @@ __global__ void kernCalculateMeshBoundingBoxIntersections(int nPaths, int nMeshe
 
     float tmin, tmax;
     glm::vec3 tmin_n, tmax_n;
-    if (orientedBoxIntersection(mesh.boxMin, mesh.boxMax, rt, tmin, tmax, tmin_n, tmax_n)) {
-      intersections[idx] = glm::ivec2(pathIndex, meshIndex);
+    if (orientedBoxIntersection(gridMin, gridMax, rt, tmin, tmax, tmin_n, tmax_n)) {
+      intersections[idx] = glm::ivec3(pathIndex, meshIndex, gridIndex);
     }
     else {
-      intersections[idx] = glm::ivec2(-1, -1);
+      intersections[idx] = glm::ivec3(-1, -1, -1);
     }
   }
 }
 
 __global__ void kernPathTraceMesh(int nIntersections, PathSegment * iterationPaths,
-  Geom * meshgeoms, Mesh * meshes, glm::ivec2 * intersections, Triangle * triangles,
+  Geom * meshgeoms, Mesh * meshes, glm::ivec3 * intersections, Triangle * triangles,
   ShadeableIntersection * intersection_out) {
   int index = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (index < nIntersections) {
-    int pathIndex = intersections[index].x;
-    int meshIndex = intersections[index].y;
-    PathSegment & path = iterationPaths[pathIndex];
-    Geom & meshGeom = meshgeoms[meshIndex];
-
-    glm::vec3 tmp_intersect, tmp_normal;
+    glm::vec3 tmp_intersect;
+    glm::ivec3 idx = intersections[index];
     bool outside;
-    intersection_out[index].t = meshIntersectionTest(meshGeom, meshes, triangles, path.ray, tmp_intersect, tmp_normal, outside);
-    intersection_out[index].surfaceNormal = tmp_normal;
-    intersection_out[index].materialId = meshGeom.materialid;
+    intersection_out[index].t = meshIntersectionTest(meshgeoms[idx.y], meshes,
+      triangles, iterationPaths[idx.x].ray, 
+      tmp_intersect, intersection_out[index].surfaceNormal, outside, idx.z, 
+      iterationPaths[idx.x].insideRefractiveObject);
+    intersection_out[index].materialId = meshgeoms[idx.y].materialid;
   }
 }
 
 __global__ void kernTakeMeshIntersection(int nIntersections, PathSegment * iterationPaths,
-  glm::ivec2 * intersectionKeys, ShadeableIntersection * intersectionValues) {
+  glm::ivec3 * intersectionKeys, ShadeableIntersection * intersectionValues) {
   int index = (blockIdx.x * blockDim.x) + threadIdx.x;
   if (index < nIntersections) {
     ShadeableIntersection & meshIntersection = intersectionValues[index];
@@ -438,8 +445,8 @@ struct SortByMaterial {
 };
 
 struct IsNonintersection {
-  __host__ __device__ bool operator() (const glm::ivec2 v) {
-    return v.x == -1 && v.y == -1;
+  __host__ __device__ bool operator() (const glm::ivec3 v) {
+    return v.x == -1 && v.y == -1 && v.z == -1;
   }
 };
 
@@ -456,7 +463,7 @@ struct TakeMinIntersection {
 };
 
 struct ComparePathKey {
-  __host__ __device__ bool operator() (const glm::ivec2 v1, const glm::ivec2 v2) {
+  __host__ __device__ bool operator() (const glm::ivec3 v1, const glm::ivec3 v2) {
     return v1.x == v2.x;
   }
 };
@@ -557,34 +564,42 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
         , dev_meshes
         , dev_triangles
         );
+      checkCUDAError("trace one bounce");
+      cudaDeviceSynchronize();
 #if CALCMESHSEPARATELY == 1
       // meshes
+      dim3 blockSize3d(8, 8, 8);
       if (hst_scene->meshGeoms.size() > 0) {
         dim3 meshBoxTracing(
-          (num_pathsInFlight + blockSize2d.x - 1) / blockSize2d.x,
-          (hst_scene->meshGeoms.size() + blockSize2d.y - 1) / blockSize2d.y
+          (num_pathsInFlight + blockSize3d.x - 1) / blockSize3d.x,
+          (hst_scene->meshGeoms.size() + blockSize3d.y - 1) / blockSize3d.y,
+          (GRID_FULL + blockSize3d.z - 1) / blockSize3d.z
           );
-        kernCalculateMeshBoundingBoxIntersections << <meshBoxTracing, blockSize2d >> >(
+        kernCalculateMeshBoundingBoxIntersections << <meshBoxTracing, blockSize3d >> >(
           num_pathsInFlight, hst_scene->meshGeoms.size(), dev_paths, dev_meshgeoms, dev_meshes, dev_path_mesh_intersections);
-        thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections = thrust::device_pointer_cast(dev_path_mesh_intersections);
-        int numIntersections = num_pathsInFlight * hst_scene->meshGeoms.size();
-        thrust::device_ptr<glm::ivec2> dev_thrust_path_mesh_intersections_end =
+        checkCUDAError("calculate bounding box intersections");
+        cudaDeviceSynchronize();
+        thrust::device_ptr<glm::ivec3> dev_thrust_path_mesh_intersections = thrust::device_pointer_cast(dev_path_mesh_intersections);
+        int numIntersections = num_pathsInFlight * hst_scene->meshGeoms.size() * GRID_FULL;
+        thrust::device_ptr<glm::ivec3> dev_thrust_path_mesh_intersections_end =
           thrust::remove_if(dev_thrust_path_mesh_intersections, dev_thrust_path_mesh_intersections + numIntersections, IsNonintersection());
         int numActualIntersections = dev_thrust_path_mesh_intersections_end - dev_thrust_path_mesh_intersections;
-        // printf("Culled from %d to %d intersections\n", numIntersections, numActualIntersections);
+        printf("Culled from %d to %d intersections\n", numIntersections, numActualIntersections);
         dim3 meshTracing((numActualIntersections + blockSize1d - 1) / blockSize1d);
         kernPathTraceMesh << <meshTracing, blockSize1d >> > (
           numActualIntersections, dev_paths, dev_meshgeoms, dev_meshes, dev_path_mesh_intersections, dev_triangles,
           dev_path_mesh_intersection_dists);
+        checkCUDAError("calculate ray-mesh intersections");
+        cudaDeviceSynchronize();
 
         thrust::device_ptr<ShadeableIntersection> dev_thrust_path_mesh_intersection_dists =
           thrust::device_pointer_cast(dev_path_mesh_intersection_dists);
-        thrust::device_ptr<glm::ivec2> dev_thrust_pm_intersection_out =
+        thrust::device_ptr<glm::ivec3> dev_thrust_pm_intersection_out =
           thrust::device_pointer_cast(dev_pm_intersection_out);
         thrust::device_ptr<ShadeableIntersection> dev_thrust_pm_intersection_dists_out =
           thrust::device_pointer_cast(dev_pm_intersection_dists_out);
 
-        thrust::pair<thrust::device_ptr<glm::ivec2>, thrust::device_ptr<ShadeableIntersection>> reductionResult =
+        thrust::pair<thrust::device_ptr<glm::ivec3>, thrust::device_ptr<ShadeableIntersection>> reductionResult =
           thrust::reduce_by_key(dev_thrust_path_mesh_intersections,
           dev_thrust_path_mesh_intersections + numActualIntersections,
           dev_thrust_path_mesh_intersection_dists,
@@ -595,10 +610,11 @@ void pathtrace(uchar4 *pbo, int frame, int iter) {
         int numPathIntersections = reductionResult.first - dev_thrust_pm_intersection_out;
         kernTakeMeshIntersection << <dim3(numPathIntersections + blockSize1d - 1 / blockSize1d), blockSize1d >> >(
           numPathIntersections, dev_paths, dev_pm_intersection_out, dev_pm_intersection_dists_out);
+        checkCUDAError("get new ray-mesh intersections");
+        cudaDeviceSynchronize();
       }
 #endif
-      checkCUDAError("trace one bounce");
-      cudaDeviceSynchronize();
+      
 #if (CACHEFIRSTBOUNCE == 1 && ANTIALIAS_SAMPLE_SIDE == 0)
     }
 #endif

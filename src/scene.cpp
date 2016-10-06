@@ -106,7 +106,7 @@ int Scene::loadMesh(string meshid) {
 
 int Scene::loadGeom(string objectid) {
 	int id = atoi(objectid.c_str());
-	if (id != geoms.size()) {
+	if (id != geoms.size() + meshGeoms.size()) {
 		cout << "ERROR: OBJECT ID does not match expected number of geoms" << endl;
 		return -1;
 	}

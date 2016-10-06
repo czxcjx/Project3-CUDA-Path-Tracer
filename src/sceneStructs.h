@@ -8,7 +8,8 @@
 
 #define BACKGROUND_COLOR (glm::vec3(0.0f))
 
-#define GRID_SIZE 4
+#define GRID_SIZE 2
+#define GRID_FULL (GRID_SIZE * GRID_SIZE * GRID_SIZE)
 
 enum GeomType {
   SPHERE = 0,
@@ -41,7 +42,7 @@ struct Triangle {
     vertices[0] = v1;
     vertices[1] = v2;
     vertices[2] = v3;
-    normal = glm::normalize(glm::cross(v3 - v1, v2 - v1));
+    normal = glm::normalize(glm::cross(v2 - v1, v3 - v1));
   }
 };
 
@@ -54,7 +55,7 @@ struct Mesh {
 
   struct {
     int start, end;
-  } gridIdx[GRID_SIZE][GRID_SIZE][GRID_SIZE];
+  } gridIdx[GRID_FULL];
 
   Mesh(int start, int end, std::vector<Triangle> & triangles, std::vector<Triangle> & gridTriangles) {
     triangleStart = start;
@@ -95,14 +96,15 @@ struct Mesh {
         }
       }
     }
-    for (int x = 0; x < GRID_SIZE; x++) {
+    for (int z = 0; z < GRID_SIZE; z++) {
       for (int y = 0; y < GRID_SIZE; y++) {
-        for (int z = 0; z < GRID_SIZE; z++) {
-          gridIdx[x][y][z].start = gridTriangles.size();
+        for (int x = 0; x < GRID_SIZE; x++) {
+          int idx = z * GRID_SIZE * GRID_SIZE + y * GRID_SIZE + x;
+          gridIdx[idx].start = gridTriangles.size();
           for (int i = 0; i < grid[x][y][z].size(); i++) {
             gridTriangles.push_back(grid[x][y][z][i]);
           }
-          gridIdx[x][y][z].end = gridTriangles.size();
+          gridIdx[idx].end = gridTriangles.size();
         }
       }
     }

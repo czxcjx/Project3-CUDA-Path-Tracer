@@ -97,7 +97,7 @@ void scatterRay(
 	Ray & ray = pathSegment.ray;
   ray.origin = intersect;
 	thrust::uniform_real_distribution<float> u01(0, 1);
-  const float specularWeight = 0.0f;
+  const float specularWeight = 0.5f;
   const float specularWeightInverse = (specularWeight > 0.0f) ? 1.0f / specularWeight : 0.0f;
   const float diffuseWeightInverse = 1.0f / (1 - specularWeight);
 	// Specular highlight
@@ -111,11 +111,11 @@ void scatterRay(
 			ray.direction = glm::reflect(ray.direction, normal);
 		}
 		else if (m.hasRefractive > 0.0f) {
-			float refractionCoeff = (pathSegment.insideRefractiveObject) ? m.indexOfRefraction : 1.0f / m.indexOfRefraction;
+			float refractionCoeff = (pathSegment.insideRefractiveObject) ? m.indexOfRefraction : (1.0f / m.indexOfRefraction);
       // Schlick's approximation for fresnel
       float R_0_sqrt = (m.indexOfRefraction - 1.0f) / (m.indexOfRefraction + 1.0f);
       float R_0 = R_0_sqrt * R_0_sqrt;
-      float R = R_0 + (1.0f - R_0) * glm::pow(1.0f + glm::dot(normal, ray.direction), 5.0f);
+      float R = R_0 + (1.0f - R_0) * glm::pow(1.0f - fabs(glm::dot(normal, ray.direction)), 5.0f);
       if (u01(rng) < R) {
         ray.direction = glm::normalize(glm::reflect(ray.direction, normal));
       }

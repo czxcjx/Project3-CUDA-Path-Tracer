@@ -41,9 +41,9 @@ EMITTANCE   0
 // Specular white
 MATERIAL 4
 RGB         .98 .98 .98
-SPECEX      10
-SPECRGB     .98 .98 .98
-REFL        1
+SPECEX      50
+SPECRGB     .8 .8 .8
+REFL        0
 REFR        0
 REFRIOR     0
 EMITTANCE   0
@@ -52,7 +52,7 @@ EMITTANCE   0
 MATERIAL 5
 RGB         .85 .35 .35
 SPECEX      10
-SPECRGB     .98 .98 .98
+SPECRGB     .4 .4 .4
 REFL        1
 REFR        0
 REFRIOR     0
@@ -60,13 +60,44 @@ EMITTANCE   0
 
 // Glass
 MATERIAL 6
-RGB         0.8 0.8 0.8
-SPECEX      200
-SPECRGB     .5 .5 .5
+RGB         0.9 0.9 0.9
+SPECEX      0
+SPECRGB     0 0 0
 REFL        0
 REFR        1
-REFRIOR     3
+REFRIOR     1.5
 EMITTANCE   0
+
+// Mirror
+MATERIAL 7
+RGB         0.9 0.9 0.9
+SPECEX      0
+SPECRGB     0 0 0
+REFL        1
+REFR        0
+REFRIOR     0
+EMITTANCE   0
+
+// Diffuse blue
+MATERIAL 8
+RGB         .35 .35 .85
+SPECEX      0
+SPECRGB     0 0 0
+REFL        0
+REFR        0
+REFRIOR     0
+EMITTANCE   0
+
+// Grey mirror
+MATERIAL 9
+RGB         0.4 0.4 0.4 
+SPECEX      30
+SPECRGB     0.98 0.98 0.98
+REFL        1
+REFR        0
+REFRIOR     0
+EMITTANCE   0
+
 // Camera
 CAMERA
 RES         800 800
@@ -127,14 +158,46 @@ TRANS       5 5 0
 ROTAT       0 0 0
 SCALE       .01 10 10
 
-// Mesh
+// Teapot
 OBJECT 6
 mesh
 mesh 0
-material 3
-TRANS       0 2 -2
+material 5
+TRANS       3 0 0
 ROTAT       0 0 0
-SCALE       0.03 0.03 0.03
+SCALE       0.02 0.02 0.02
+
+// Glass Ball
+OBJECT 7
+sphere
+material 6
+TRANS -1 1 2.5
+ROTAT 0 0 0
+SCALE 2 2 2
+
+// Mirror ball
+OBJECT 8
+sphere
+material 7
+TRANS 3 1 3
+ROTAT 0 0 0
+SCALE 2 2 2
+
+// Diffuse ball
+OBJECT 9
+sphere
+material 8
+TRANS -3 1 4
+ROTAT 0 0 0
+SCALE 2 2 2
+
+// Specular ball
+OBJECT 10
+sphere
+material 4
+TRANS -2 1 1
+ROTAT 0 0 0
+SCALE 2 2 2
 
 // Teapot
 MESH 0
